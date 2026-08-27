@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="BahnDelay">
+  <rect width="512" height="512" rx="128" fill="#e34d36"/>
+  <rect x="135" y="90" width="242" height="286" rx="84" fill="none" stroke="#fffefa" stroke-width="28"/>
+  <path d="M174 194h164M184 311h144M205 376l-40 52M307 376l40 52" fill="none" stroke="#fffefa" stroke-width="28" stroke-linecap="round"/>
+  <circle cx="200" cy="284" r="18" fill="#fffefa"/>
+  <circle cx="312" cy="284" r="18" fill="#fffefa"/>
+</svg>

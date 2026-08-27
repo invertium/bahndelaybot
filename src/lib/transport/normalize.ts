@@ -22,6 +22,8 @@ const asIso = (value: unknown): string | undefined => {
   }
   return undefined;
 };
+const validDate = (value: string | undefined): value is string => Boolean(value && Number.isFinite(Date.parse(value)) && Date.parse(value) > Date.UTC(2000, 0, 1) && Date.parse(value) < Date.UTC(2100, 0, 1));
+const assertPlace = (place: PlaceRef): void => { if (!place.id || !place.name || place.id === "unknown" || place.name === "Unbekannt") throw new Error("Invalid transport place"); };
 
 export function normalizePlace(raw: unknown): PlaceRef {
   const root = record(raw);
@@ -60,6 +62,8 @@ export function normalizeLeg(raw: unknown, index = 0): JourneyLeg {
   const calls = list(item.intermediateStops ?? item.stopCalls ?? item.stops).map(normalizeStopCall);
   const scheduledDeparture = asIso(item.scheduledStartTime ?? fromRecord.scheduledDeparture ?? item.scheduledDeparture ?? item.startTime) ?? new Date(0).toISOString();
   const scheduledArrival = asIso(item.scheduledEndTime ?? toRecord.scheduledArrival ?? item.scheduledArrival ?? item.endTime) ?? scheduledDeparture;
+  if (!validDate(scheduledDeparture) || !validDate(scheduledArrival) || Date.parse(scheduledArrival) < Date.parse(scheduledDeparture)) throw new Error("Invalid transport leg times");
+  assertPlace(origin); assertPlace(destination);
   const predictedDeparture = asIso(item.startTime ?? fromRecord.departure ?? item.realtimeStartTime ?? item.predictedDeparture);
   const predictedArrival = asIso(item.endTime ?? toRecord.arrival ?? item.realtimeEndTime ?? item.predictedArrival);
   const service = record(item.service);
@@ -91,6 +95,7 @@ export function normalizeJourney(raw: unknown, index = 0): JourneyPlan {
   const scheduledArrival = asIso(item.scheduledEndTime ?? last?.scheduledArrival) ?? new Date(0).toISOString();
   const predictedDeparture = asIso(item.startTime ?? item.realtimeStartTime ?? first?.predictedDeparture);
   const predictedArrival = asIso(item.endTime ?? item.realtimeEndTime ?? last?.predictedArrival);
+  if (!legs.length || !validDate(scheduledDeparture) || !validDate(scheduledArrival) || Date.parse(scheduledArrival) < Date.parse(scheduledDeparture)) throw new Error("Invalid transport journey");
   const transfers = number(item.transfers);
   return {
     id: string(item.id) ?? `journey-${index}`,

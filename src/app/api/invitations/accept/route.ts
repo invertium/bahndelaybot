@@ -6,7 +6,7 @@ import { invitations } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { hashToken, normalizeEmail } from "@/lib/security";
 
-const acceptRequest = z.object({ token: z.string().min(32) });
+const acceptRequest = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{43}$/, "invalid token") });
 
 export async function POST(request: Request) {
   const parsed = acceptRequest.safeParse(await request.json().catch(() => null));
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     maxAge: 10 * 60,
   });
 
-  await auth.api.signInMagicLink({
+  const result = await auth.api.signInMagicLink({
     headers: request.headers,
     body: {
       email: normalizeEmail(invite.email),
@@ -43,5 +43,6 @@ export async function POST(request: Request) {
       metadata: { inviteToken: token },
     },
   });
-  return Response.json({ email: invite.email });
+  if (!result?.status) return Response.json({ error: "Anmeldelink konnte nicht versendet werden" }, { status: 502, headers: { "cache-control": "no-store" } });
+  return Response.json({ email: invite.email }, { headers: { "cache-control": "no-store" } });
 }

@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { invitations } from "@/db/schema";
 import { requirePageAdmin } from "@/lib/membership";
 import { InviteForm } from "./invite-form";
+import { ResendInviteButton } from "./resend-invite-button";
 
 export default async function AdminPage() {
   await requirePageAdmin();
@@ -22,7 +23,7 @@ export default async function AdminPage() {
           {records.map((invite) => (
             <li key={invite.id} className="list-row">
               <span>{invite.email}</span>
-              <small>{invite.redeemedAt ? "Angenommen" : invite.expiresAt < new Date() ? "Abgelaufen" : "Offen"}</small>
+              <small>{invite.redeemedAt ? "Angenommen" : invite.expiresAt < new Date() ? "Abgelaufen" : <><span>Offen · </span><ResendInviteButton invitationId={invite.id} /></>}</small>
             </li>
           ))}
         </ul>

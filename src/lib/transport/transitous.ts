@@ -16,9 +16,14 @@ export class TransitousProvider implements TransportProvider {
     headers.set("accept", "application/json");
     headers.set("user-agent", this.userAgent);
     if (this.token) headers.set("authorization", `Bearer ${this.token}`);
-    const res = await this.fetcher(`${this.base}${path}`, { ...init, headers, signal: init?.signal ?? AbortSignal.timeout(12_000) });
+    const res = await this.fetcher(`${this.base}${path}`, { ...init, headers, redirect: "error", signal: init?.signal ?? AbortSignal.timeout(12_000) });
     if (!res.ok) throw new Error(`Transitous request failed (${res.status})`);
-    return res.json();
+    if (!res.headers.get("content-type")?.toLowerCase().includes("application/json")) throw new Error("Transitous returned non-JSON data");
+    const length = Number(res.headers.get("content-length"));
+    if (Number.isFinite(length) && length > 2_000_000) throw new Error("Transitous response too large");
+    const text = await res.text();
+    if (text.length > 2_000_000) throw new Error("Transitous response too large");
+    try { return JSON.parse(text); } catch { throw new Error("Transitous returned malformed JSON"); }
   }
   async searchLocations(query: string): Promise<PlaceRef[]> {
     const data = await this.request(`/api/v1/geocode?${new URLSearchParams({ text: query })}`);

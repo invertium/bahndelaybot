@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const serverSchema = z.object({
+  DATABASE_URL: z.string().url().refine((value) => value.startsWith("postgres://") || value.startsWith("postgresql://"), "DATABASE_URL must be a PostgreSQL URL"),
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().url().optional(),
   BOOTSTRAP_ADMIN_EMAIL: z.string().email(),
@@ -12,6 +13,7 @@ const serverSchema = z.object({
 
 export function getServerEnv() {
   return serverSchema.parse({
+    DATABASE_URL: process.env.DATABASE_URL,
     BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
     BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
     BOOTSTRAP_ADMIN_EMAIL: process.env.BOOTSTRAP_ADMIN_EMAIL,

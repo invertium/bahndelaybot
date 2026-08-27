@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { parseDbLinkCandidate, UnsafeJourneyLinkError } from "@/lib/import";
+import { fetchDbConnection, parseDbLinkCandidate, DbLinkImportError, UnsafeJourneyLinkError } from "@/lib/import";
 import { getMemberSession } from "@/lib/membership";
 import { transitous } from "@/lib/transport";
 
@@ -9,7 +9,9 @@ export async function POST(request: Request) {
   const parsed = z.object({ url: z.string().url().max(4000) }).safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "Gültigen DB-Link eingeben" }, { status: 400 });
   try {
-    const candidate = parseDbLinkCandidate(parsed.data.url);
+    const candidate = parsed.data.url.includes("vbid=")
+      ? await fetchDbConnection(parsed.data.url)
+      : parseDbLinkCandidate(parsed.data.url);
     const [origins, destinations] = await Promise.all([
       candidate.origin ? transitous.searchLocations(candidate.origin) : Promise.resolve([]),
       candidate.destination ? transitous.searchLocations(candidate.destination) : Promise.resolve([]),
@@ -19,8 +21,7 @@ export async function POST(request: Request) {
       : [];
     return Response.json({ candidate, matches: { origins, destinations }, plans, needsConfirmation: plans.length !== 1 });
   } catch (error) {
-    if (error instanceof UnsafeJourneyLinkError) return Response.json({ error: error.message }, { status: 400 });
-    console.error("Link import failed", error);
-    return Response.json({ error: "DB-Link konnte nicht verarbeitet werden" }, { status: 500 });
+    if (error instanceof UnsafeJourneyLinkError || error instanceof DbLinkImportError) return Response.json({ error: error.message }, { status: error instanceof DbLinkImportError && error.code === "not-found" ? 404 : 400 });
+    return Response.json({ error: "DB-Link konnte nicht verarbeitet werden" }, { status: 502 });
   }
 }

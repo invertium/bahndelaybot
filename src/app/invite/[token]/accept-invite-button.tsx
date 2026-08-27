@@ -8,12 +8,10 @@ export function AcceptInviteButton({ token }: { token: string }) {
 
   async function accept() {
     setState("sending");
-    const response = await fetch("/api/invitations/accept", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ token }),
-    });
-    setState(response.ok ? "sent" : "error");
+    try {
+      const response = await fetch("/api/invitations/accept", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token }) });
+      setState(response.ok ? "sent" : "error");
+    } catch { setState("error"); }
   }
 
   if (state === "sent") return <p className="notice success">E-Mail ist unterwegs. Du kannst dieses Fenster schließen.</p>;

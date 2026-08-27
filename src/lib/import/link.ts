@@ -1,47 +1,23 @@
+import { z } from "zod";
+
 const ALLOWED_HOSTS = new Set(["bahn.de", "www.bahn.de", "int.bahn.de", "reiseauskunft.bahn.de", "next.bahn.de"]);
+const VBID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const API_ORIGIN = "https://int.bahn.de";
+const API_MAX_BYTES = 512 * 1024;
 export class UnsafeJourneyLinkError extends Error { constructor(message = "Der Link ist nicht erlaubt.") { super(message); this.name = "UnsafeJourneyLinkError"; } }
-export function parseDbLink(input: string): URL {
-  let url: URL; try { url = new URL(input.trim()); } catch { throw new UnsafeJourneyLinkError(); }
-  if (url.protocol !== "https:" || !ALLOWED_HOSTS.has(url.hostname.toLowerCase()) || url.username || url.password || url.port) throw new UnsafeJourneyLinkError();
-  return url;
-}
+export class DbLinkImportError extends Error { constructor(public code: "invalid-vbid" | "not-found" | "not-json" | "too-large" | "malformed" | "timeout" | "empty", message: string) { super(message); this.name = "DbLinkImportError"; } }
+export function parseDbLink(input: string): URL { let url: URL; try { url = new URL(input.trim()); } catch { throw new UnsafeJourneyLinkError(); } if (url.protocol !== "https:" || !ALLOWED_HOSTS.has(url.hostname.toLowerCase()) || url.username || url.password || url.port) throw new UnsafeJourneyLinkError(); return url; }
+export function parseVbid(input: string): string { const url = parseDbLink(input); const vbid = url.searchParams.get("vbid"); if (url.hostname.toLowerCase() !== "int.bahn.de" || !vbid || !VBID.test(vbid) || url.searchParams.getAll("vbid").length !== 1) throw new DbLinkImportError("invalid-vbid", "Der DB-Link enthält keine gültige Verbindungskennung."); return vbid.toLowerCase(); }
 export interface SafeFetchOptions { fetcher?: typeof fetch; maxRedirects?: number; }
-export async function fetchDbLink(input: string, options: SafeFetchOptions = {}): Promise<Response> {
-  let url = parseDbLink(input); const fetcher = options.fetcher ?? fetch; const max = options.maxRedirects ?? 3;
-  for (let attempt = 0; attempt <= max; attempt++) {
-    const response = await fetcher(url, { redirect: "manual", headers: { accept: "text/html,application/xhtml+xml,application/pdf" } });
-    if (![301,302,303,307,308].includes(response.status)) return response;
-    const location = response.headers.get("location"); if (!location) throw new UnsafeJourneyLinkError("Der Link enthält keine Weiterleitung.");
-    url = parseDbLink(new URL(location, url).toString());
-  }
-  throw new UnsafeJourneyLinkError("Zu viele Weiterleitungen.");
-}
-
-export interface DbLinkCandidate {
-  origin?: string;
-  destination?: string;
-  departure?: string;
-  resolvedUrl: string;
-  ambiguous: string[];
-}
-
-export function parseDbLinkCandidate(input: string): DbLinkCandidate {
-  const url = parseDbLink(input);
-  const fragment = new URLSearchParams(url.hash.replace(/^#/, ""));
-  const value = (...keys: string[]) => {
-    for (const key of keys) {
-      const found = url.searchParams.get(key) ?? fragment.get(key);
-      if (found) return found;
-    }
-  };
-  const origin = value("so", "start", "origin", "from");
-  const destination = value("zo", "ziel", "destination", "to");
-  const rawDeparture = value("hd", "departure", "date");
-  const parsedDeparture = rawDeparture ? new Date(rawDeparture) : undefined;
-  const departure = parsedDeparture && !Number.isNaN(parsedDeparture.getTime()) ? parsedDeparture.toISOString() : undefined;
-  const ambiguous: string[] = [];
-  if (!origin) ambiguous.push("Start fehlt im Link.");
-  if (!destination) ambiguous.push("Ziel fehlt im Link.");
-  if (rawDeparture && !departure) ambiguous.push("Reisezeit im Link ist ungültig.");
-  return { origin, destination, departure, resolvedUrl: url.toString(), ambiguous };
-}
+export async function fetchDbLink(input: string, options: SafeFetchOptions = {}): Promise<Response> { let url = parseDbLink(input); const fetcher = options.fetcher ?? fetch; const max = options.maxRedirects ?? 3; for (let attempt = 0; attempt <= max; attempt++) { const response = await fetcher(url, { redirect: "manual", headers: { accept: "text/html,application/xhtml+xml,application/pdf" } }); if (![301,302,303,307,308].includes(response.status)) return response; const location = response.headers.get("location"); if (!location) throw new UnsafeJourneyLinkError("Der Link enthält keine Weiterleitung."); url = parseDbLink(new URL(location, url).toString()); } throw new UnsafeJourneyLinkError("Zu viele Weiterleitungen."); }
+const DbConnectionSchema = z.object({
+  startOrt: z.string().trim().min(1).max(200),
+  zielOrt: z.string().trim().min(1).max(200),
+  hinfahrtDatum: z.string().trim().min(1).max(80),
+}).strip();
+const LegacyConnectionSchema = z.object({ origin: z.string().trim().min(1).max(200), destination: z.string().trim().min(1).max(200), departure: z.string().trim().min(1).max(80) }).strip();
+export interface DbLinkCandidate { origin?: string; destination?: string; departure?: string; resolvedUrl: string; ambiguous: string[]; }
+export function normalizeDbConnection(payload: unknown, resolvedUrl: string): DbLinkCandidate { const parsed = DbConnectionSchema.safeParse(payload); const legacy = LegacyConnectionSchema.safeParse(payload); if (!parsed.success && !legacy.success) throw new DbLinkImportError("malformed", "Die DB-Verbindung ist ungültig."); const data = parsed.success ? { origin: parsed.data.startOrt, destination: parsed.data.zielOrt, rawTime: parsed.data.hinfahrtDatum } : { origin: legacy.data!.origin, destination: legacy.data!.destination, rawTime: legacy.data!.departure }; const departureDate = new Date(data.rawTime); const departure = !Number.isNaN(departureDate.getTime()) && departureDate.getTime() > Date.UTC(2000, 0, 1) ? departureDate.toISOString() : undefined; if (!departure) throw new DbLinkImportError("empty", "Abfahrtszeit fehlt oder ist ungültig."); return { origin: data.origin, destination: data.destination, departure, resolvedUrl, ambiguous: [] }; }
+async function boundedJson(response: Response): Promise<unknown> { if (!response.headers.get("content-type")?.toLowerCase().includes("application/json")) throw new DbLinkImportError("not-json", "Die DB-Antwort ist kein JSON."); const length = Number(response.headers.get("content-length")); if (Number.isFinite(length) && length > API_MAX_BYTES) throw new DbLinkImportError("too-large", "Die DB-Antwort ist zu groß."); const reader = response.body?.getReader(); if (!reader) throw new DbLinkImportError("malformed", "Die DB-Antwort ist leer."); const chunks: Uint8Array[] = []; let total = 0; try { while (true) { const part = await reader.read(); if (part.done) break; total += part.value.byteLength; if (total > API_MAX_BYTES) throw new DbLinkImportError("too-large", "Die DB-Antwort ist zu groß."); chunks.push(part.value); } } finally { reader.releaseLock(); } try { const bytes = new Uint8Array(total); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; } return JSON.parse(new TextDecoder().decode(bytes)); } catch { throw new DbLinkImportError("malformed", "Die DB-Antwort enthält ungültiges JSON."); } }
+export async function fetchDbConnection(input: string, options: { fetcher?: typeof fetch; timeoutMs?: number } = {}): Promise<DbLinkCandidate> { const vbid = parseVbid(input); const fetcher = options.fetcher ?? fetch; const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 10_000); try { const response = await fetcher(`${API_ORIGIN}/web/api/angebote/verbindung/${encodeURIComponent(vbid)}`, { redirect: "error", signal: controller.signal, headers: { accept: "application/json" } }); if (response.status === 404) throw new DbLinkImportError("not-found", "Die DB-Verbindung wurde nicht gefunden."); if (!response.ok) throw new DbLinkImportError("malformed", "Die DB-Verbindung konnte nicht geladen werden."); return normalizeDbConnection(await boundedJson(response), input); } catch (error) { if (error instanceof DbLinkImportError) throw error; if (error instanceof DOMException && error.name === "AbortError") throw new DbLinkImportError("timeout", "Die DB-Anfrage hat zu lange gedauert."); throw new DbLinkImportError("malformed", "Die DB-Verbindung konnte nicht gelesen werden."); } finally { clearTimeout(timeout); } }
+export function parseDbLinkCandidate(input: string): DbLinkCandidate { const url = parseDbLink(input); const fragment = new URLSearchParams(url.hash.replace(/^#/, "")); const value = (...keys: string[]): string | undefined => keys.map((key) => url.searchParams.get(key) ?? fragment.get(key)).find((value): value is string => Boolean(value)); const origin = value("so", "start", "origin", "from"), destination = value("zo", "ziel", "destination", "to"), rawDeparture = value("hd", "departure", "date"); const parsedDeparture = rawDeparture ? new Date(rawDeparture) : undefined; const departure = parsedDeparture && !Number.isNaN(parsedDeparture.getTime()) ? parsedDeparture.toISOString() : undefined; const ambiguous: string[] = []; if (!origin) ambiguous.push("Start fehlt im Link."); if (!destination) ambiguous.push("Ziel fehlt im Link."); if (rawDeparture && !departure) ambiguous.push("Reisezeit im Link ist ungültig."); return { origin, destination, departure, resolvedUrl: url.toString(), ambiguous }; }

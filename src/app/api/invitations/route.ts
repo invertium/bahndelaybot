@@ -1,4 +1,5 @@
 import { and, desc, eq, gt, isNull } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { invitations, memberships, user } from "@/db/schema";
@@ -8,6 +9,8 @@ import { getMemberSession } from "@/lib/membership";
 import { createInvitationToken, hashToken, normalizeEmail } from "@/lib/security";
 
 const invitationRequest = z.object({ email: z.string().email() });
+const resendRequest = z.object({ invitationId: z.string().uuid() });
+const resendAttempts = new Map<string, number>();
 
 export async function GET(request: Request) {
   const member = await getMemberSession(request.headers);
@@ -30,7 +33,19 @@ export async function POST(request: Request) {
   const member = await getMemberSession(request.headers);
   if (!member || member.role !== "admin") return Response.json({ error: "Nicht erlaubt" }, { status: 403 });
 
-  const parsed = invitationRequest.safeParse(await request.json().catch(() => null));
+  const body = await request.json().catch(() => null);
+  const resend = resendRequest.safeParse(body);
+  if (resend.success) {
+    const last = resendAttempts.get(resend.data.invitationId) ?? 0;
+    if (Date.now() - last < 60_000) return Response.json({ error: "Bitte kurz warten und erneut versuchen." }, { status: 429 });
+    const [invite] = await getDb().select().from(invitations).where(and(eq(invitations.id, resend.data.invitationId), isNull(invitations.redeemedAt))).limit(1);
+    if (!invite) return Response.json({ error: "Einladung nicht verfügbar" }, { status: 404 });
+    const token = createInvitationToken(); const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); const attemptKey = `invitation-${invite.id}-${randomUUID()}`;
+    await getDb().update(invitations).set({ tokenHash: hashToken(token), expiresAt }).where(eq(invitations.id, invite.id));
+    try { await sendInvitationEmail(invite.email, `${getAppUrl()}/invite/${token}`, invite.id, attemptKey); resendAttempts.set(invite.id, Date.now()); return Response.json({ ok: true }); }
+    catch { await getDb().update(invitations).set({ tokenHash: invite.tokenHash, expiresAt: invite.expiresAt }).where(eq(invitations.id, invite.id)); return Response.json({ error: "Einladung konnte nicht versendet werden" }, { status: 502 }); }
+  }
+  const parsed = invitationRequest.safeParse(body);
   if (!parsed.success) return Response.json({ error: "Gültige E-Mail-Adresse erforderlich" }, { status: 400 });
   const email = normalizeEmail(parsed.data.email);
 

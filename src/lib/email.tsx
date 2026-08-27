@@ -48,7 +48,7 @@ async function sendEmail(to: string, subject: string, content: React.ReactElemen
   return data;
 }
 
-export function sendInvitationEmail(email: string, inviteUrl: string, invitationId: string) {
+export function sendInvitationEmail(email: string, inviteUrl: string, invitationId: string, attemptKey = `invitation-${invitationId}`) {
   return sendEmail(
     email,
     "Deine Einladung zu BahnDelay",
@@ -59,7 +59,7 @@ export function sendInvitationEmail(email: string, inviteUrl: string, invitation
       actionLabel="Einladung annehmen"
       actionUrl={inviteUrl}
     />,
-    `invitation-${invitationId}`,
+    attemptKey,
     inviteUrl,
   );
 }

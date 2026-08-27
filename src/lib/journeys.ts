@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { journeyLegs, journeys } from "@/db/schema";
@@ -8,10 +9,11 @@ export type JourneyImportMethod = "pdf" | "link" | "manual";
 
 export async function saveJourney(userId: string, plan: JourneyPlan, importedVia: JourneyImportMethod, title?: string) {
   const db = getDb();
-  return db.transaction(async (tx) => {
-    const [created] = await tx
+  const journeyId = randomUUID();
+  const created = db
       .insert(journeys)
       .values({
+        id: journeyId,
         userId,
         title: title?.trim() || `${plan.origin.name} → ${plan.destination.name}`,
         originId: plan.origin.id,
@@ -26,11 +28,13 @@ export async function saveJourney(userId: string, plan: JourneyPlan, importedVia
         providerPayload: { plan },
       })
       .returning({ id: journeys.id });
-
-    if (plan.legs.length) {
-      await tx.insert(journeyLegs).values(
+  if (!plan.legs.length) {
+    await db.batch([created]);
+    return journeyId;
+  }
+  const legQuery = db.insert(journeyLegs).values(
         plan.legs.map((leg, sequence) => ({
-          journeyId: created.id,
+          journeyId,
           sequence,
           mode: leg.mode,
           lineName: leg.lineName,
@@ -48,10 +52,9 @@ export async function saveJourney(userId: string, plan: JourneyPlan, importedVia
           cancelled: leg.cancelled,
           stopCalls: leg.stopCalls,
         })),
-      );
-    }
-    return created.id;
-  });
+  );
+  await db.batch([created, legQuery]);
+  return journeyId;
 }
 
 export function statusForPlan(plan: JourneyPlan, now = new Date()) {

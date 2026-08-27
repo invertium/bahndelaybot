@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, isNull } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { cookies, headers } from "next/headers";
 import { getDb } from "@/db";
 import { invitations, memberships } from "@/db/schema";
@@ -14,22 +14,27 @@ export async function completePendingInvitation() {
   if (!token) return { ok: false as const, reason: "missing" as const };
 
   const db = getDb();
-  const result = await db.transaction(async (tx) => {
-    const [claimed] = await tx
-      .update(invitations)
-      .set({ redeemedAt: new Date() })
-      .where(
-        and(
-          eq(invitations.tokenHash, hashToken(token)),
-          eq(invitations.email, normalizeEmail(session.user.email)),
-          isNull(invitations.redeemedAt),
-        ),
-      )
-      .returning({ id: invitations.id });
-    if (!claimed) return false;
-    await tx.insert(memberships).values({ userId: session.user.id, role: "member" }).onConflictDoNothing();
-    return true;
-  });
-  if (result) cookieStore.delete("pending_invite");
-  return result ? { ok: true as const } : { ok: false as const, reason: "invalid" as const };
+  const result = await db.execute(sql`
+    WITH claimed AS (
+      UPDATE ${invitations}
+      SET ${invitations.redeemedAt} = now()
+      WHERE ${invitations.tokenHash} = ${hashToken(token)}
+        AND ${invitations.email} = ${normalizeEmail(session.user.email)}
+        AND ${invitations.redeemedAt} IS NULL
+        AND ${invitations.expiresAt} > now()
+      RETURNING ${invitations.id}
+    ), inserted AS (
+      INSERT INTO ${memberships} (${memberships.userId}, ${memberships.role})
+      SELECT ${session.user.id}, 'member' FROM claimed
+      ON CONFLICT (${memberships.userId}) DO NOTHING
+      RETURNING ${memberships.userId}
+    ) SELECT count(*)::int AS count FROM claimed
+  `);
+  const rows = (result as unknown as { rows?: unknown }).rows;
+  const count = Array.isArray(rows) && rows[0] && typeof rows[0] === "object" && "count" in rows[0]
+    ? Number((rows[0] as { count: unknown }).count)
+    : 0;
+  const claimed = count > 0;
+  if (claimed) cookieStore.delete("pending_invite");
+  return claimed ? { ok: true as const } : { ok: false as const, reason: "invalid" as const };
 }

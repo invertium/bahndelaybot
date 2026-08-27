@@ -17,16 +17,16 @@ export async function completePendingInvitation() {
   const result = await db.execute(sql`
     WITH claimed AS (
       UPDATE ${invitations}
-      SET ${invitations.redeemedAt} = now()
+      SET ${sql.identifier("redeemed_at")} = now()
       WHERE ${invitations.tokenHash} = ${hashToken(token)}
         AND ${invitations.email} = ${normalizeEmail(session.user.email)}
         AND ${invitations.redeemedAt} IS NULL
         AND ${invitations.expiresAt} > now()
       RETURNING ${invitations.id}
     ), inserted AS (
-      INSERT INTO ${memberships} (${memberships.userId}, ${memberships.role})
+      INSERT INTO ${memberships} (${sql.identifier("user_id")}, ${sql.identifier("role")})
       SELECT ${session.user.id}, 'member' FROM claimed
-      ON CONFLICT (${memberships.userId}) DO NOTHING
+      ON CONFLICT (${sql.identifier("user_id")}) DO NOTHING
       RETURNING ${memberships.userId}
     ) SELECT count(*)::int AS count FROM claimed
   `);

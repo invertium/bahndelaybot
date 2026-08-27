@@ -16,10 +16,19 @@ cp .env.example .env.local
 bun run dev
 ```
 
-Useful checks are `bun run lint`, `bun run typecheck`, `bun run test`, and
-`bun run test:e2e`. Playwright's mobile project starts the local server when
-`PLAYWRIGHT_BASE_URL` is not set. To test a deployed preview, set that variable
-to the exact deployment URL.
+Useful checks are `bun run lint`, `bun run typecheck`, `bun run test`,
+`bun run test:coverage`, and `bun run test:e2e`. The E2E command provisions an
+isolated disposable PostgreSQL 17 container, applies the Drizzle migrations,
+captures development-only email locally, and exercises the complete invitation
+and Better Auth magic-link flow in desktop and mobile Chromium. Docker is
+required; the container and its data volume are removed even after a failed
+test. Use `bun run test:e2e:direct` when a suitable test database and server are
+already running.
+
+Playwright starts the local server when `PLAYWRIGHT_BASE_URL` is not set. To
+smoke-test a deployed preview, set that variable to the exact deployment URL;
+stateful invite tests remain skipped unless their explicit isolated-test
+variables are present. Never point the stateful E2E suite at production data.
 
 ## Services and environment
 

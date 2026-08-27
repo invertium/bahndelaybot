@@ -8,7 +8,7 @@ import { getAppUrl } from "@/lib/env";
 import { getMemberSession } from "@/lib/membership";
 import { createInvitationToken, hashToken, normalizeEmail } from "@/lib/security";
 
-const invitationRequest = z.object({ email: z.string().email() });
+const invitationRequest = z.object({ email: z.string().trim().email() });
 const resendRequest = z.object({ invitationId: z.string().uuid() });
 const resendAttempts = new Map<string, number>();
 

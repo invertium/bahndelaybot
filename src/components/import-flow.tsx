@@ -3,5 +3,196 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, FileUp, Link2 } from "lucide-react";
 import type { JourneyPlan } from "@/lib/transport/types";
-type Result = { candidate?: { origin?: { name?: string }; destination?: { name?: string } }; plans: JourneyPlan[]; error?: string };
-export function ImportFlow() { const router = useRouter(); const fileRef = useRef<HTMLInputElement>(null); const [url, setUrl] = useState(""); const [source, setSource] = useState<"pdf" | "link" | null>(null); const [result, setResult] = useState<Result | null>(null); const [selected, setSelected] = useState(0); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); async function inspect(file?: File) { setBusy(true); setError(""); setSelected(0); setSource(file ? "pdf" : "link"); try { let response: Response; if (file) { const body = new FormData(); body.append("file", file); response = await fetch("/api/import/pdf", { method: "POST", body }); } else response = await fetch("/api/import/link", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error); setResult(data); if (!data.plans?.length) setError("Keine passende Verbindung gefunden. Bitte prüfe die Angaben."); } catch (e) { setSource(null); setError(e instanceof Error ? e.message : "Import fehlgeschlagen"); } finally { setBusy(false); } } async function save() { const plan = result?.plans[selected]; if (!plan || !source) return; setBusy(true); try { const response = await fetch("/api/journeys", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ plan, importedVia: source, title: `${plan.origin.name} → ${plan.destination.name}` }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error); router.push(`/journey/${data.id}`); } catch (e) { setError(e instanceof Error ? e.message : "Reise konnte nicht gespeichert werden"); } finally { setBusy(false); } } function reset() { setResult(null); setSource(null); setSelected(0); setError(""); if (fileRef.current) fileRef.current.value = ""; } return <section className="auth-card import-page-card"><span className="icon-circle"><FileUp size={21}/></span><h1>Reise <em>importieren</em></h1><p>Nutze dein DB-Ticket als PDF oder füge einen geteilten Link ein.</p>{result?.plans?.length ? <div className="plan-results"><p className="result-heading">{result.candidate?.origin?.name ?? result.plans[0].origin.name} → {result.candidate?.destination?.name ?? result.plans[0].destination.name}<br/><small>Wähle deine Verbindung</small></p>{result.plans.map((plan, index) => <button className={`plan-choice ${selected === index ? "selected" : ""}`} key={plan.id} onClick={() => setSelected(index)}><span><b>{new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" }).format(new Date(plan.scheduledDeparture))} – {new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" }).format(new Date(plan.scheduledArrival))}</b><small>{plan.legs[0]?.lineName ?? plan.legs[0]?.mode} · {plan.transfers} Umstiege</small></span><span className="radio-dot" /></button>)}<button className="button button-dark button-full" onClick={save} disabled={busy}>{busy ? "Wird gespeichert …" : "Diese Reise speichern"} <ArrowRight size={17}/></button><button className="text-button" onClick={reset}>Anderen Import versuchen</button></div> : <><div className="drop-zone"><FileUp size={25}/><b>PDF auswählen</b><span>Textbasierte DB-Tickets werden unterstützt</span><input ref={fileRef} type="file" accept="application/pdf" aria-label="Ticket PDF auswählen" onChange={(e) => e.target.files?.[0] && inspect(e.target.files[0])}/></div><div className="or"><span>oder</span></div><label htmlFor="link"><Link2 size={13}/> DB Navigator Link</label><input id="link" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://bahn.de/..."/><button className="button button-dark button-full" onClick={() => inspect()} disabled={!url || busy}>{busy ? "Wird geprüft …" : "Import prüfen"} <ArrowRight size={17}/></button></>}{error && <p className="form-error" role="alert">{error}</p>}<p className="import-privacy">Deine Datei wird nur zur Analyse verwendet und danach sofort gelöscht.</p></section>; }
+type ImportPlan = JourneyPlan & { recommended?: boolean };
+type Result = {
+  candidate?: { origin?: string; destination?: string };
+  plans: ImportPlan[];
+  error?: string;
+};
+
+const timeFormatter = new Intl.DateTimeFormat("de-DE", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
+const time = (value: string) => timeFormatter.format(new Date(value));
+
+function serviceLabel(plan: JourneyPlan) {
+  const services = plan.legs.flatMap((leg) => leg.lineName ? [leg.lineName] : []);
+  return [...new Set(services)].join(" → ") || plan.legs[0]?.mode || "Verbindung";
+}
+
+function departureTime(plan: JourneyPlan) {
+  const firstRide = plan.legs.find((leg) => leg.mode !== "walk");
+  return firstRide?.predictedDeparture ?? firstRide?.scheduledDeparture ?? plan.scheduledDeparture;
+}
+
+export function ImportFlow() {
+  const router = useRouter();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [url, setUrl] = useState("");
+  const [source, setSource] = useState<"pdf" | "link" | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
+  const [selected, setSelected] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function inspect(file?: File) {
+    setBusy(true);
+    setError("");
+    setSelected(0);
+    setSource(file ? "pdf" : "link");
+    try {
+      let response: Response;
+      if (file) {
+        const body = new FormData();
+        body.append("file", file);
+        response = await fetch("/api/import/pdf", { method: "POST", body });
+      } else
+        response = await fetch("/api/import/link", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      setResult(data);
+      if (!data.plans?.length)
+        setError(
+          "Keine passende Verbindung gefunden. Bitte prüfe die Angaben.",
+        );
+    } catch (e) {
+      setSource(null);
+      setError(e instanceof Error ? e.message : "Import fehlgeschlagen");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function save() {
+    const plan = result?.plans[selected];
+    if (!plan || !source) return;
+    setBusy(true);
+    try {
+      const response = await fetch("/api/journeys", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          plan,
+          importedVia: source,
+          title: `${plan.origin.name} → ${plan.destination.name}`,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      router.push(`/journey/${data.id}`);
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Reise konnte nicht gespeichert werden",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  function reset() {
+    setResult(null);
+    setSource(null);
+    setSelected(0);
+    setError("");
+    if (fileRef.current) fileRef.current.value = "";
+  }
+  return (
+    <section className="auth-card import-page-card">
+      <span className="icon-circle">
+        <FileUp size={21} />
+      </span>
+      <h1>
+        Reise <em>importieren</em>
+      </h1>
+      <p>Nutze dein DB-Ticket als PDF oder füge einen geteilten Link ein.</p>
+      {result?.plans?.length ? (
+        <div className="plan-results">
+          <p className="result-heading">
+            {result.candidate?.origin ?? result.plans[0].origin.name} →{" "}
+            {result.candidate?.destination ?? result.plans[0].destination.name}
+            <br />
+            <small>Wähle deine Verbindung</small>
+          </p>
+          {result.plans.map((plan, index) => (
+            <button
+              className={`plan-choice ${selected === index ? "selected" : ""}`}
+              key={plan.id}
+              onClick={() => setSelected(index)}
+            >
+              <span>
+                <b>
+                  {time(departureTime(plan))} –{" "}
+                  {time(plan.predictedArrival ?? plan.scheduledArrival)}
+                </b>
+                <small>
+                  {plan.recommended ? "Empfohlen · " : ""}{serviceLabel(plan)} ·{" "}
+                  {plan.transfers} {plan.transfers === 1 ? "Umstieg" : "Umstiege"}
+                </small>
+              </span>
+              <span className="radio-dot" />
+            </button>
+          ))}
+          <button
+            className="button button-dark button-full"
+            onClick={save}
+            disabled={busy}
+          >
+            {busy ? "Wird gespeichert …" : "Diese Reise speichern"}{" "}
+            <ArrowRight size={17} />
+          </button>
+          <button className="text-button" onClick={reset}>
+            Anderen Import versuchen
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="drop-zone">
+            <FileUp size={25} />
+            <b>PDF auswählen</b>
+            <span>Textbasierte DB-Tickets werden unterstützt</span>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="application/pdf"
+              aria-label="Ticket PDF auswählen"
+              onChange={(e) =>
+                e.target.files?.[0] && inspect(e.target.files[0])
+              }
+            />
+          </div>
+          <div className="or">
+            <span>oder</span>
+          </div>
+          <label htmlFor="link">
+            <Link2 size={13} /> DB Navigator Link
+          </label>
+          <input
+            id="link"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://bahn.de/..."
+          />
+          <button
+            className="button button-dark button-full"
+            onClick={() => inspect()}
+            disabled={!url || busy}
+          >
+            {busy ? "Wird geprüft …" : "Import prüfen"} <ArrowRight size={17} />
+          </button>
+        </>
+      )}
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      <p className="import-privacy">
+        Deine Datei wird nur zur Analyse verwendet und danach sofort gelöscht.
+      </p>
+    </section>
+  );
+}

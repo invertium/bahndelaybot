@@ -9,4 +9,19 @@ describe("transport helpers", () => {
   it("normalizes a MOTIS-shaped itinerary", () => { const p = normalizeJourney({ from: { id: "A", name: "A" }, to: { id: "B", name: "B" }, startTime: "2026-08-27T10:00:00Z", endTime: "2026-08-27T11:00:00Z", legs: [{ mode: "RAIL", from: { id: "A", name: "A" }, to: { id: "B", name: "B" }, startTime: "2026-08-27T10:00:00Z", endTime: "2026-08-27T11:00:00Z" }] }); expect(p.legs[0].mode).toBe("train"); expect(p.transfers).toBe(0); });
   it("calculates delay and current leg", () => { const p = plan("x", "2026-08-27T11:00:00Z"); p.legs[0].predictedArrival = "2026-08-27T10:40:00Z"; expect(delayMinutes(p.legs[0])).toBe(10); expect(currentLeg(p, new Date("2026-08-27T10:15:00Z"))?.id).toBe("x1"); });
   it("marks short transfers risky and labels alternatives", () => { const a = plan("a", "2026-08-27T11:00:00Z"); const b = plan("b", "2026-08-27T11:10:00Z", 0); expect(hasRiskyTransfer(a)).toBe(false); expect(hasRiskyTransfer(plan("r", "2026-08-27T11:00:00Z", 0))).toBe(true); expect(rankAlternatives([a,b])[0].label).toBe("fastest"); });
+  it("recommends the one-transfer Frankfurt Airport route over a five-minute faster two-transfer route", () => {
+    const viaCity = plan("via-city", "2026-08-27T20:13:00Z", 2);
+    viaCity.legs[0].lineName = "ICE 512";
+    const viaAirport = plan("via-airport", "2026-08-27T20:18:00Z", 1);
+    viaAirport.legs[0].lineName = "ICE 910";
+    viaAirport.legs[0].destination = place("Frankfurt Flughafen Fernbahnhof");
+    viaAirport.legs[1].lineName = "ICE 22";
+
+    const ranked = rankAlternatives([viaCity, viaAirport]);
+
+    expect(ranked[0].id).toBe("via-airport");
+    expect(ranked[0].recommended).toBe(true);
+    expect(ranked[0].scheduledArrival).toBe("2026-08-27T20:18:00Z");
+    expect(ranked.find((candidate) => candidate.id === "via-city")?.label).toBe("fastest");
+  });
 });

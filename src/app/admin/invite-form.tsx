@@ -11,16 +11,22 @@ export function InviteForm() {
     event.preventDefault();
     setPending(true);
     setMessage("");
-    const form = new FormData(event.currentTarget);
-    const response = await fetch("/api/invitations", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: form.get("email") }),
-    });
-    const result = (await response.json()) as { error?: string; inviteUrl?: string };
-    setPending(false);
-    setMessage(response.ok ? `Einladung versendet${result.inviteUrl ? `: ${result.inviteUrl}` : "."}` : (result.error ?? "Senden fehlgeschlagen"));
-    if (response.ok) event.currentTarget.reset();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    try {
+      const response = await fetch("/api/invitations", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: form.get("email") }),
+      });
+      const result = (await response.json().catch(() => ({}))) as { error?: string; inviteUrl?: string };
+      setMessage(response.ok ? `Einladung versendet${result.inviteUrl ? `: ${result.inviteUrl}` : "."}` : (result.error ?? "Senden fehlgeschlagen"));
+      if (response.ok) formElement.reset();
+    } catch {
+      setMessage("Netzwerkfehler. Bitte versuche es erneut.");
+    } finally {
+      setPending(false);
+    }
   }
 
   return (

@@ -1,4 +1,5 @@
 import "server-only";
+import { appendFile } from "node:fs/promises";
 import { Body, Button, Container, Head, Heading, Html, Preview, Text } from "@react-email/components";
 import { Resend } from "resend";
 import { getServerEnv } from "@/lib/env";
@@ -33,6 +34,11 @@ function EmailContent({ heading, preview, message, actionLabel, actionUrl }: Ema
 
 async function sendEmail(to: string, subject: string, content: React.ReactElement, idempotencyKey: string, developmentUrl: string) {
   const env = getServerEnv();
+  const capturePath = process.env.EMAIL_CAPTURE_PATH;
+  if (capturePath && process.env.NODE_ENV !== "production") {
+    await appendFile(capturePath, `${JSON.stringify({ to, subject, url: developmentUrl })}\n`, { encoding: "utf8", mode: 0o600 });
+    return { id: "captured" };
+  }
   if (!env.RESEND_API_KEY) {
     if (process.env.NODE_ENV === "production") throw new Error("RESEND_API_KEY is required in production");
     console.info(`[email:development] ${subject} -> ${to}: ${developmentUrl}`);

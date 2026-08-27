@@ -1,12 +1,12 @@
 import { z } from "zod";
 import {
-  fetchDbConnection,
+  fetchDbJourneyDetails,
   parseDbLinkCandidate,
   DbLinkImportError,
   UnsafeJourneyLinkError,
 } from "@/lib/import";
 import { getMemberSession } from "@/lib/membership";
-import { rankAlternatives, transitous } from "@/lib/transport";
+import { planDbRecovery, rankAlternatives, transitous } from "@/lib/transport";
 
 export async function POST(request: Request) {
   const member = await getMemberSession(request.headers);
@@ -21,9 +21,9 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   try {
-    const candidate = parsed.data.url.includes("vbid=")
-      ? await fetchDbConnection(parsed.data.url)
-      : parseDbLinkCandidate(parsed.data.url);
+    const isVbid = parsed.data.url.includes("vbid=");
+    const details = isVbid ? await fetchDbJourneyDetails(parsed.data.url) : undefined;
+    const candidate = details?.candidate ?? parseDbLinkCandidate(parsed.data.url);
     const [origins, destinations] = await Promise.all([
       candidate.origin
         ? transitous.searchLocations(candidate.origin)
@@ -32,19 +32,24 @@ export async function POST(request: Request) {
         ? transitous.searchLocations(candidate.destination)
         : Promise.resolve([]),
     ]);
-    const plans =
-      origins[0] && destinations[0]
-        ? rankAlternatives(
-            await transitous
-              .planJourney({
-                origin: origins[0],
-                destination: destinations[0],
-                departure: candidate.departure,
-                results: 8,
-              })
-              .catch(() => []),
-          )
+    let plans: ReturnType<typeof rankAlternatives> = [];
+    if (origins[0] && destinations[0]) {
+      const now = new Date();
+      const started = details?.bookedPlan
+        ? Date.parse(details.bookedPlan.predictedDeparture ?? details.bookedPlan.scheduledDeparture) <= now.getTime() + 15 * 60_000
+        : false;
+      const recovered = details
+        ? await planDbRecovery(details, destinations[0], transitous, now)
         : [];
+      if (started && recovered.length) {
+        plans = recovered.slice(0, 8);
+      } else {
+        const searched = await transitous.planJourney({
+          origin: origins[0], destination: destinations[0], departure: candidate.departure, results: 8,
+        }).catch(() => []);
+        plans = rankAlternatives([...(details?.bookedPlan ? [details.bookedPlan] : []), ...searched]).slice(0, 8);
+      }
+    }
     return Response.json({
       candidate,
       matches: { origins, destinations },

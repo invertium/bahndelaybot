@@ -71,7 +71,7 @@ test.describe("complete invitation journey", () => {
         await page.getByRole("button", { name: /Import prüfen/ }).click();
         const recommendation = page.locator(".plan-choice").first();
         await expect(recommendation).toContainText("Empfohlen", { timeout: 30_000 });
-        await expect(recommendation).toContainText("ICE 910 → ICE 22");
+        await expect(recommendation).toContainText("ICE 512 → ICE 22");
         await expect(recommendation).toContainText("1 Umstieg");
         await expect(recommendation).toContainText("22:18");
         await page.screenshot({ path: testInfo.outputPath("db-route-recommendation.png"), fullPage: true });

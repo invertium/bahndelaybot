@@ -132,6 +132,9 @@ export function ImportFlow() {
                   {plan.recommended ? "Empfohlen · " : ""}{serviceLabel(plan)} ·{" "}
                   {plan.transfers} {plan.transfers === 1 ? "Umstieg" : "Umstiege"}
                 </small>
+                {plan.predictedArrival && plan.predictedArrival !== plan.scheduledArrival ? (
+                  <small>Planmäßig {time(plan.scheduledArrival)} · erwartet {time(plan.predictedArrival)}</small>
+                ) : null}
               </span>
               <span className="radio-dot" />
             </button>

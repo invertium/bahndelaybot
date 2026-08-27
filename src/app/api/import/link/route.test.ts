@@ -3,15 +3,16 @@ import type { JourneyPlan } from "@/lib/transport/types";
 
 const mocks = vi.hoisted(() => ({
   member: vi.fn(),
-  fetchDbConnection: vi.fn(),
+  fetchDbJourneyDetails: vi.fn(),
   searchLocations: vi.fn(),
   planJourney: vi.fn(),
+  planDbRecovery: vi.fn(),
 }));
 
 vi.mock("@/lib/membership", () => ({ getMemberSession: mocks.member }));
 vi.mock("@/lib/import", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/import")>()),
-  fetchDbConnection: mocks.fetchDbConnection,
+  fetchDbJourneyDetails: mocks.fetchDbJourneyDetails,
 }));
 vi.mock("@/lib/transport", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/transport")>()),
@@ -19,6 +20,7 @@ vi.mock("@/lib/transport", async (importOriginal) => ({
     searchLocations: mocks.searchLocations,
     planJourney: mocks.planJourney,
   },
+  planDbRecovery: mocks.planDbRecovery,
 }));
 
 import { POST } from "./route";
@@ -54,12 +56,18 @@ function plan(id: string, arrival: string, transfers: number, services: string[]
 describe("POST /api/import/link", () => {
   beforeEach(() => {
     mocks.member.mockResolvedValue({ session: { user: { id: "member-1" } }, role: "member" });
-    mocks.fetchDbConnection.mockResolvedValue({
-      origin: "München Hbf",
-      destination: "Mainz Hbf",
-      departure: "2026-08-27T15:28:00.000Z",
-      resolvedUrl: "db-link",
-      ambiguous: [],
+    const bookedPlan = plan("booked", "2026-08-27T19:18:00.000Z", 1, ["ICE 512", "IC 2347"]);
+    bookedPlan.predictedDeparture = "2026-08-27T16:21:00.000Z";
+    mocks.fetchDbJourneyDetails.mockResolvedValue({
+      candidate: {
+        origin: "München Hbf",
+        destination: "Mainz Hbf",
+        departure: "2026-08-27T15:28:00.000Z",
+        resolvedUrl: "db-link",
+        ambiguous: [],
+      },
+      bookedPlan,
+      currentTrain: { lineName: "ICE 512", tripId: "ice-512", cancelled: false, stops: [] },
     });
     mocks.searchLocations
       .mockResolvedValueOnce([place("muc", "München Hbf")])
@@ -67,6 +75,10 @@ describe("POST /api/import/link", () => {
     mocks.planJourney.mockResolvedValue([
       plan("via-city", "2026-08-27T20:13:00.000Z", 2, ["ICE 512", "ICE 2", "RB10"]),
       plan("via-airport", "2026-08-27T20:18:00.000Z", 1, ["ICE 910", "ICE 22"]),
+    ]);
+    mocks.planDbRecovery.mockResolvedValue([
+      { ...plan("via-airport", "2026-08-27T20:18:00.000Z", 1, ["ICE 512", "ICE 22"]), recommended: true, riskyTransfer: false, label: "fewer-transfers" },
+      { ...bookedPlan, recommended: false, riskyTransfer: true, label: "fastest" },
     ]);
   });
 
@@ -80,14 +92,14 @@ describe("POST /api/import/link", () => {
     const body = await response.json() as { plans: Array<JourneyPlan & { recommended: boolean }> };
 
     expect(response.status).toBe(200);
-    expect(mocks.fetchDbConnection).toHaveBeenCalledWith(url);
-    expect(mocks.planJourney).toHaveBeenCalledWith(expect.objectContaining({ results: 8 }));
+    expect(mocks.fetchDbJourneyDetails).toHaveBeenCalledWith(url);
+    expect(mocks.planDbRecovery).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ id: "mainz" }), expect.any(Object), expect.any(Date));
     expect(body.plans[0]).toMatchObject({
       id: "via-airport",
       scheduledArrival: "2026-08-27T20:18:00.000Z",
       transfers: 1,
       recommended: true,
     });
-    expect(body.plans[0].legs.map((leg) => leg.lineName)).toEqual(["ICE 910", "ICE 22"]);
+    expect(body.plans[0].legs.map((leg) => leg.lineName)).toEqual(["ICE 512", "ICE 22"]);
   });
 });

@@ -47,7 +47,15 @@ function recommendationScore(plan: JourneyPlan) {
   const arrival = Date.parse(plan.predictedArrival ?? plan.scheduledArrival);
   const transferPenalty = plan.transfers * 10 * 60_000;
   const riskPenalty = hasRiskyTransfer(plan) ? 20 * 60_000 : 0;
-  return arrival + transferPenalty + riskPenalty;
+  const rides = plan.legs.filter((leg) => leg.mode !== "walk");
+  const missedConnection = rides.some((leg, index) => {
+    if (index === 0) return false;
+    const previous = rides[index - 1];
+    const previousArrival = previous.predictedArrival ?? previous.scheduledArrival;
+    const departure = leg.predictedDeparture ?? leg.scheduledDeparture;
+    return Date.parse(departure) < Date.parse(previousArrival);
+  });
+  return arrival + transferPenalty + riskPenalty + (missedConnection ? 24 * 60 * 60_000 : 0);
 }
 
 export function rankAlternatives(plans: JourneyPlan[]): RankedAlternative[] {
